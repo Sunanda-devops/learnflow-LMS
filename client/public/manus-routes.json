@@ -1,0 +1,1 @@
+{"routes":[{"path":"/","title":"Dashboard"},{"path":"/courses","title":"Explore courses"},{"path":"/courses/:slug","title":"Course detail"},{"path":"/learn/:lessonId","title":"Lesson"},{"path":"/admin","title":"Admin workspace"},{"path":"/404","title":"Not found"}]}
