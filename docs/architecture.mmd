@@ -1,0 +1,17 @@
+flowchart LR
+  learner["Learner / Admin"] --> browser["React + Vite client"]
+  browser --> trpc["tRPC HTTP API"]
+  trpc --> auth["Platform OAuth session"]
+  trpc --> db["Drizzle ORM"]
+  db --> mysql[("MySQL 8+")]
+  browser --> static["Express static serving"]
+  static --> assets["dist/public"]
+  admin["Admin workspace"] --> trpc
+  trpc --> telemetry["Activity + progress records"]
+
+  classDef app fill:#263840,stroke:#f26b4f,color:#fffaf5;
+  classDef data fill:#dcece6,stroke:#5c917e,color:#17232c;
+  classDef infra fill:#e9e5f5,stroke:#8475b9,color:#17232c;
+  class browser,trpc,static,admin app;
+  class db,mysql,telemetry data;
+  class auth,assets,learner infra;

@@ -54,56 +54,172 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   }
   values.lastSignedIn ??= new Date();
   if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
-  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+  await db
+    .insert(users)
+    .values(values)
+    .onDuplicateKeyUpdate({ set: updateSet });
 }
 
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.openId, openId))
+    .limit(1);
   return result[0];
 }
 
 export async function listCourses() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(courses).where(eq(courses.status, "published")).orderBy(desc(courses.updatedAt));
+  return db
+    .select()
+    .from(courses)
+    .where(eq(courses.status, "published"))
+    .orderBy(desc(courses.updatedAt));
 }
 
 export async function getCourseBySlug(slug: string) {
   const db = await getDb();
   if (!db) return null;
-  const course = await db.select().from(courses).where(eq(courses.slug, slug)).limit(1);
+  const course = await db
+    .select()
+    .from(courses)
+    .where(eq(courses.slug, slug))
+    .limit(1);
   if (!course[0]) return null;
-  const courseModules = await db.select().from(modules).where(eq(modules.courseId, course[0].id)).orderBy(modules.orderIndex);
+  const courseModules = await db
+    .select()
+    .from(modules)
+    .where(eq(modules.courseId, course[0].id))
+    .orderBy(modules.orderIndex);
   const courseLessons = courseModules.length
-    ? await db.select().from(lessons).where(sql`${lessons.moduleId} in (${sql.join(courseModules.map(m => sql`${m.id}`), sql`, `)})`).orderBy(lessons.orderIndex)
+    ? await db
+        .select()
+        .from(lessons)
+        .where(
+          sql`${lessons.moduleId} in (${sql.join(
+            courseModules.map(m => sql`${m.id}`),
+            sql`, `
+          )})`
+        )
+        .orderBy(lessons.orderIndex)
     : [];
-  return { ...course[0], modules: courseModules.map(module => ({ ...module, lessons: courseLessons.filter(lesson => lesson.moduleId === module.id) })) };
+  return {
+    ...course[0],
+    modules: courseModules.map(module => ({
+      ...module,
+      lessons: courseLessons.filter(lesson => lesson.moduleId === module.id),
+    })),
+  };
 }
 
-export async function markLessonComplete(userId: number, courseId: number, lessonId: number, completed: boolean) {
+export async function getLessonById(lessonId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select({ lesson: lessons, module: modules, course: courses })
+    .from(lessons)
+    .innerJoin(modules, eq(lessons.moduleId, modules.id))
+    .innerJoin(courses, eq(modules.courseId, courses.id))
+    .where(and(eq(lessons.id, lessonId), eq(lessons.status, "published")))
+    .limit(1);
+  return result[0] ?? null;
+}
+
+export async function getCourseProgress(userId: number, courseId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      lessonId: progress.lessonId,
+      completed: progress.completed,
+      completedAt: progress.completedAt,
+      lastViewedAt: progress.lastViewedAt,
+    })
+    .from(progress)
+    .where(and(eq(progress.userId, userId), eq(progress.courseId, courseId)));
+}
+
+export async function markLessonComplete(
+  userId: number,
+  courseId: number,
+  lessonId: number,
+  completed: boolean
+) {
   const db = await getDb();
   if (!db) return;
-  const existing = await db.select().from(progress).where(and(eq(progress.userId, userId), eq(progress.lessonId, lessonId))).limit(1);
+  const lesson = await db
+    .select({ id: lessons.id, moduleId: lessons.moduleId })
+    .from(lessons)
+    .where(eq(lessons.id, lessonId))
+    .limit(1);
+  if (!lesson[0]) throw new Error("Lesson not found");
+  const owningModule = await db
+    .select({ courseId: modules.courseId })
+    .from(modules)
+    .where(eq(modules.id, lesson[0].moduleId))
+    .limit(1);
+  if (owningModule[0]?.courseId !== courseId)
+    throw new Error("Lesson does not belong to course");
+  const existing = await db
+    .select()
+    .from(progress)
+    .where(
+      and(
+        eq(progress.userId, userId),
+        eq(progress.courseId, courseId),
+        eq(progress.lessonId, lessonId)
+      )
+    )
+    .limit(1);
   const now = new Date();
   if (existing[0]) {
-    await db.update(progress).set({ completed: completed ? 1 : 0, lastViewedAt: now, completedAt: completed ? now : null }).where(eq(progress.id, existing[0].id));
+    await db
+      .update(progress)
+      .set({
+        completed: completed ? 1 : 0,
+        lastViewedAt: now,
+        completedAt: completed ? now : null,
+      })
+      .where(eq(progress.id, existing[0].id));
   } else {
-    await db.insert(progress).values({ userId, courseId, lessonId, completed: completed ? 1 : 0, lastViewedAt: now, completedAt: completed ? now : null });
+    await db.insert(progress).values({
+      userId,
+      courseId,
+      lessonId,
+      completed: completed ? 1 : 0,
+      lastViewedAt: now,
+      completedAt: completed ? now : null,
+    });
   }
-  await db.insert(activity).values({ userId, courseId, lessonId, type: completed ? "completed" : "started", label: completed ? "Completed a lesson" : "Returned to a lesson" });
+  await db.insert(activity).values({
+    userId,
+    courseId,
+    lessonId,
+    type: completed ? "completed" : "started",
+    label: completed ? "Completed a lesson" : "Returned to a lesson",
+  });
 }
 
 export async function getAdminSummary() {
   const db = await getDb();
   if (!db) return null;
-  const [courseCount, learnerCount, enrollmentCount, completedCount] = await Promise.all([
-    db.select({ count: sql<number>`count(*)` }).from(courses),
-    db.select({ count: sql<number>`count(*)` }).from(users).where(eq(users.role, "user")),
-    db.select({ count: sql<number>`count(*)` }).from(enrollments),
-    db.select({ count: sql<number>`count(*)` }).from(progress).where(eq(progress.completed, 1)),
-  ]);
+  const [courseCount, learnerCount, enrollmentCount, completedCount] =
+    await Promise.all([
+      db.select({ count: sql<number>`count(*)` }).from(courses),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(users)
+        .where(eq(users.role, "user")),
+      db.select({ count: sql<number>`count(*)` }).from(enrollments),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(progress)
+        .where(eq(progress.completed, 1)),
+    ]);
   return {
     courseCount: Number(courseCount[0]?.count ?? 0),
     learnerCount: Number(learnerCount[0]?.count ?? 0),

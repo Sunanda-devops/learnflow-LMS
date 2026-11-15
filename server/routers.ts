@@ -2,7 +2,12 @@ import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import {
+  adminProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from "./_core/trpc";
 import * as db from "./db";
 
 export const appRouter = router({
@@ -17,8 +22,35 @@ export const appRouter = router({
   }),
   lms: router({
     courses: publicProcedure.query(() => db.listCourses()),
-    courseBySlug: publicProcedure.input(z.object({ slug: z.string().min(1) })).query(({ input }) => db.getCourseBySlug(input.slug)),
-    completeLesson: protectedProcedure.input(z.object({ courseId: z.number(), lessonId: z.number(), completed: z.boolean() })).mutation(({ ctx, input }) => db.markLessonComplete(ctx.user.id, input.courseId, input.lessonId, input.completed).then(() => ({ success: true }))),
+    courseBySlug: publicProcedure
+      .input(z.object({ slug: z.string().min(1) }))
+      .query(({ input }) => db.getCourseBySlug(input.slug)),
+    lessonById: publicProcedure
+      .input(z.object({ id: z.string().regex(/^\d+$/) }))
+      .query(({ input }) => db.getLessonById(Number(input.id))),
+    myProgress: protectedProcedure
+      .input(z.object({ courseId: z.number().int().positive() }))
+      .query(({ ctx, input }) =>
+        db.getCourseProgress(ctx.user.id, input.courseId)
+      ),
+    completeLesson: protectedProcedure
+      .input(
+        z.object({
+          courseId: z.number(),
+          lessonId: z.number(),
+          completed: z.boolean(),
+        })
+      )
+      .mutation(({ ctx, input }) =>
+        db
+          .markLessonComplete(
+            ctx.user.id,
+            input.courseId,
+            input.lessonId,
+            input.completed
+          )
+          .then(() => ({ success: true }))
+      ),
     adminSummary: adminProcedure.query(() => db.getAdminSummary()),
   }),
 });
